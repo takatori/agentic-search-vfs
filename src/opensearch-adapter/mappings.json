@@ -1,0 +1,39 @@
+{
+  "settings": {
+    "index": {
+      "knn": true
+    }
+  },
+  "mappings": {
+    "dynamic": false,
+    "properties": {
+      "slug": { "type": "keyword" },
+      "content": {
+        "type": "text",
+        "fields": {
+          "pattern": { "type": "wildcard" }
+        }
+      },
+      "content_hash": { "type": "keyword" },
+      "embedding_model_id": { "type": "keyword" },
+      "chunk_count": { "type": "integer" },
+      "chunks": {
+        "type": "nested",
+        "properties": {
+          "chunk_id": { "type": "integer" },
+          "text": { "type": "text" },
+          "embedding": {
+            "type": "knn_vector",
+            "dimension": 768,
+            "method": {
+              "name": "hnsw",
+              "engine": "lucene",
+              "space_type": "cosinesimil"
+            }
+          }
+        }
+      },
+      "updated_at": { "type": "date" }
+    }
+  }
+}

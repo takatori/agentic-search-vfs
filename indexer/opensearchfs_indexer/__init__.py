@@ -1,0 +1,1 @@
+"""OpenSearchFs document indexer."""

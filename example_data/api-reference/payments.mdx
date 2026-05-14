@@ -1,0 +1,23 @@
+---
+title: Payments API
+---
+
+# Payments
+
+`POST /payments` は決済インテントを作成します。この API は **billing** スコープを持つ **access_token** が必要です。請求グループ以外の利用者には、この文書は検索結果にも表示されません。
+
+## 決済インテントの作成
+
+リクエスト本文には `amount`, `currency`, `customer` を指定します。安全なリトライには `idempotency_key` を使います。検証エラーは機械判定可能なエラーコード付きの `400` を返します。
+
+## 確定と取消
+
+`POST /payments/{id}/capture` は認可済み金額を確定します。`POST /payments/{id}/cancel` は未確定のインテントを無効化します。決済済みの場合はスキームのルールに従って返金処理へ進みます。
+
+## Webhooks
+
+`payment_intent.succeeded` や `payment_intent.failed` を購読すると、非同期の決済状態を後続処理に反映できます。Verify webhook signatures using the signing secret from the dashboard.
+
+## Billing scope
+
+実際にお金を動かす API や、支払い手段の詳細を返す API は **billing** スコープが必要です。読み取り専用の状態確認だけを許可する場合は、より狭いスコープを利用します。

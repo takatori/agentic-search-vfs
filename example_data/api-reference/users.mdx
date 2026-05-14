@@ -1,0 +1,23 @@
+---
+title: Users API
+---
+
+# Users
+
+`GET /users` はワークスペース内のユーザー一覧を返します。呼び出しには OAuth で発行された **access_token** を `Authorization` ヘッダーに Bearer トークンとして指定します。
+
+## 一覧取得
+
+`GET /users` は `limit` と `cursor` によるページングに対応しています。レスポンスには `id`, `email`, `display_name`, `created_at`, `status` が含まれます。呼び出し元のスコープによっては、個人情報の一部が省略されます。
+
+## ユーザー作成
+
+`POST /users` は `email` と任意のプロフィール項目を JSON で受け取ります。クライアントのリトライに備えて `Idempotency-Key` ヘッダーを利用できます。
+
+## Webhook
+
+ユーザー作成や招待承認のイベントは Webhook で通知されます。Verify webhook signatures using the signing secret from the dashboard. 署名検証に失敗したイベントは処理せず、再送を待ってください。
+
+## 関連情報
+
+認証方式は `/auth/oauth.mdx` を参照してください。API キーでユーザー API を呼び出す場合は、キーのスコープが読み取り専用に制限されていることを確認します。

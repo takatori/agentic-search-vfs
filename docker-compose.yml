@@ -1,0 +1,21 @@
+services:
+  opensearch:
+    image: opensearchproject/opensearch:2.19.1
+    container_name: opensearchfs-local
+    environment:
+      discovery.type: single-node
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: SearchFsRoot2026!
+      OPENSEARCH_JAVA_OPTS: -Xms1g -Xmx1g
+      plugins.security.ssl.http.enabled: "true"
+    ports:
+      - "19200:9200"
+      - "9600:9600"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -k -u admin:SearchFsRoot2026! -fsS https://localhost:9200 >/dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30

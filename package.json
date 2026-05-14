@@ -1,0 +1,50 @@
+{
+  "name": "opensearchfs",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bootstrap": "PYTHONPATH=indexer uv run python -m opensearchfs_indexer --sync",
+    "bootstrap:recreate": "PYTHONPATH=indexer uv run python -m opensearchfs_indexer --recreate",
+    "bootstrap:qa": "PYTHONPATH=indexer uv run python -m opensearchfs_indexer --recreate --index-prefix opensearchfs-qa --data-root data_eval/qa/docs --path-tree data_eval/qa/path_tree.json",
+    "bootstrap:jqara": "PYTHONPATH=indexer uv run python -m opensearchfs_indexer --recreate --index-prefix opensearchfs-jqara --data-root data_eval/jqara/docs --path-tree data_eval/jqara/path_tree.json",
+    "bootstrap:enterprise-rag": "PYTHONPATH=indexer uv run python -m opensearchfs_indexer --recreate --index-prefix opensearchfs-enterprise-rag --data-root data_eval/enterprise_rag/docs --path-tree data_eval/enterprise_rag/path_tree.json",
+    "agent-demo": "tsx scripts/agent-demo.ts",
+    "eval:enterprise-rag-retrieval": "OPENSEARCHFS_INDEX_PREFIX=opensearchfs-enterprise-rag tsx experiments/enterprise-rag/retrieval-eval.ts",
+    "eval:enterprise-rag-retrieval:20k": "EMBEDDING_PROVIDER=nomic OPENSEARCHFS_INDEX_PREFIX=opensearchfs-enterprise-rag-nomic-20k tsx experiments/enterprise-rag/retrieval-eval.ts --cases data_eval/enterprise_rag_20k/eval_cases.jsonl --arms lexical,semantic_search --limit 100 --result-limit 10 --output reports/enterprise-rag-retrieval-eval-nomic-20k-r100.jsonl",
+    "eval:jqara-retrieval": "OPENSEARCHFS_INDEX_PREFIX=opensearchfs-jqara tsx experiments/jqara/retrieval-eval.ts",
+    "eval:ollama-enterprise-rag": "OPENSEARCHFS_INDEX_PREFIX=opensearchfs-enterprise-rag tsx experiments/enterprise-rag/ollama-agent-eval.ts",
+    "eval:ollama-enterprise-rag:20k": "EMBEDDING_PROVIDER=nomic OPENSEARCHFS_INDEX_PREFIX=opensearchfs-enterprise-rag-nomic-20k OLLAMA_MODEL=gemma4:e4b tsx experiments/enterprise-rag/ollama-agent-eval.ts --cases data_eval/enterprise_rag_20k/eval_cases_qa50.jsonl --arms grep-only,grep+semantic_search --limit 50 --max-tool-calls 12 --semantic-result-limit 5 --output reports/ollama-enterprise-rag-agent-eval-nomic-20k-qa50.jsonl",
+    "eval:ollama-qa": "OPENSEARCHFS_INDEX_PREFIX=opensearchfs-qa tsx experiments/qa/ollama-agent-eval.ts",
+    "eval:ollama-jqara": "OPENSEARCHFS_INDEX_PREFIX=opensearchfs-jqara tsx experiments/jqara/ollama-agent-eval.ts",
+    "prepare:enterprise-rag-dataset": "uv run python experiments/enterprise-rag/prepare_dataset.py",
+    "prepare:enterprise-rag-dataset:20k": "uv run python experiments/enterprise-rag/prepare_dataset.py --output-root data_eval/enterprise_rag_20k --split test --sample-questions 100 --qa-sample-questions 50 --sample-documents 20000 --seed 42 --answerable-only",
+    "bootstrap:enterprise-rag:20k": "EMBEDDING_PROVIDER=nomic NOMIC_MAX_SEQ_LENGTH=1024 OPENSEARCH_BULK_BATCH_SIZE=16 PYTHONPATH=indexer uv run python -m opensearchfs_indexer --recreate --index-prefix opensearchfs-enterprise-rag-nomic-20k --data-root data_eval/enterprise_rag_20k/docs --path-tree data_eval/enterprise_rag_20k/path_tree.json",
+    "prepare:jqara-dataset": "uv run python experiments/jqara/prepare_dataset.py",
+    "prepare:qa-dataset": "uv run python experiments/qa/prepare_dataset.py",
+    "quickstart": "tsx scripts/just-bash-opensearchfs-quickstart.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "vitest run tests/e2e"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.138",
+    "@huggingface/transformers": "^4.2.0",
+    "@opensearch-project/opensearch": "^3.5.1",
+    "@types/yargs-parser": "^21.0.3",
+    "dotenv": "^17.4.2",
+    "just-bash": "^2.14.2",
+    "yargs-parser": "^22.0.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "auth/oauth": { "isPublic": true, "groups": [] },
+  "auth/api-keys": { "isPublic": true, "groups": [] },
+  "api-reference/users": { "isPublic": true, "groups": [] },
+  "api-reference/payments": { "isPublic": false, "groups": ["billing"] },
+  "billing/invoice-policy": { "isPublic": false, "groups": ["billing"] },
+  "handbook/field-note-042": { "isPublic": true, "groups": [] },
+  "handbook/travel-expense": { "isPublic": true, "groups": [] },
+  "handbook/security/api-key-incident": { "isPublic": true, "groups": [] },
+  "internal/billing": { "isPublic": false, "groups": ["internal", "billing"] },
+  "internal/audit-log": { "isPublic": false, "groups": ["internal"] },
+  "internal/security/api-key-incident-report": { "isPublic": false, "groups": ["internal"] },
+  "internal/hr/salary": { "isPublic": false, "groups": ["internal"] }
+}
