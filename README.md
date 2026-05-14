@@ -1,4 +1,4 @@
-# OpenSearchFs: Virtual Filesystem over OpenSearch
+# AgenticSearchVfs: Virtual Filesystem over OpenSearch
 
 This repository is an OpenSearch rewrite of
 [`iamleonie/elasticsearch-fs`](https://github.com/iamleonie/elasticsearch-fs).
@@ -91,14 +91,14 @@ npm run eval:ollama-qa -- --dataset jsquad --limit 1 --output reports/ollama-qa-
 ```
 
 The generated docs live under `/qa/<dataset>/<title>/<context-id>.mdx` inside
-OpenSearchFs. Reports are written to `reports/ollama-qa-eval.jsonl` and
+AgenticSearchVfs. Reports are written to `reports/ollama-qa-eval.jsonl` and
 `reports/ollama-qa-eval.md`. Use `OLLAMA_MODEL=gemma4:e4b` to override the
 default local model. QA bootstrap/eval scripts use the isolated
 `opensearchfs-qa-*` indices, so they do not replace the default docs index.
 
 ## JQaRA Eval
 
-Prepare JQaRA passages as an OpenSearchFs tree and evaluate full-passage
+Prepare JQaRA passages as an AgenticSearchVfs tree and evaluate full-passage
 retrieval:
 
 ```bash
