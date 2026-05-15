@@ -5,6 +5,7 @@ import yargsParser from 'yargs-parser';
 import type { GrepCoarseFilter } from '../../src/core/opensearchfs.js';
 import { OpenSearchFs, type SearchScopeFilter } from '../../src/core/opensearchfs.js';
 import { normalizePath, pathToSlug, slugToPath } from '../../src/core/path-tree.js';
+import { OpenSearchSemanticSearcher } from '../../src/core/semantic-search.js';
 import { createOpenSearchClient } from '../../src/opensearch-adapter/client.js';
 import { initSessionTree } from '../../src/session.js';
 
@@ -70,6 +71,7 @@ try {
     files: session.files,
     dirs: session.dirs,
   });
+  const semanticSearcher = new OpenSearchSemanticSearcher({ client });
   const scopeFilter = await resolveScopeFilter(fs, searchPath);
 
   for (const arm of arms) {
@@ -77,6 +79,7 @@ try {
       const startedAt = Date.now();
       const retrievedPaths = await runRetrievalArm(
         fs,
+        semanticSearcher,
         arm,
         testCase.question,
         scopeFilter,
@@ -102,13 +105,14 @@ await writeReports(outputPath, rows);
 
 async function runRetrievalArm(
   fs: OpenSearchFs,
+  semanticSearcher: OpenSearchSemanticSearcher,
   arm: Arm,
   question: string,
   scopeFilter: SearchScopeFilter,
   limit: number,
 ): Promise<string[]> {
   if (arm === 'semantic_search') {
-    const hits = await fs.findSemanticMatchingFilesWithScope(
+    const hits = await semanticSearcher.findMatchingFilesWithScope(
       question,
       scopeFilter,
       limit,

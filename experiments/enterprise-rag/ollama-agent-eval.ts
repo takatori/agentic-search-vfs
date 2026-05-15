@@ -5,7 +5,10 @@ import { Bash, defineCommand } from 'just-bash';
 import yargsParser from 'yargs-parser';
 import { runOpenSearchGrep } from '../../src/core/grep.js';
 import { OpenSearchFs } from '../../src/core/opensearchfs.js';
-import { runOpenSearchSemanticSearch } from '../../src/core/semantic-search.js';
+import {
+  OpenSearchSemanticSearcher,
+  runOpenSearchSemanticSearch,
+} from '../../src/core/semantic-search.js';
 import {
   documentRecall as calculateDocumentRecall,
   extractDocumentIdsFromPaths,
@@ -254,6 +257,7 @@ try {
       files: session.files,
       dirs: session.dirs,
     });
+    const semanticSearcher = new OpenSearchSemanticSearcher({ client });
     const grep = defineCommand('grep', (commandArgs, ctx) =>
       runOpenSearchGrep(commandArgs, ctx, fs),
     );
@@ -261,7 +265,7 @@ try {
     if (arm === 'grep+semantic_search') {
       customCommands.push(
         defineCommand('semantic_search', (commandArgs, ctx) =>
-          runOpenSearchSemanticSearch(commandArgs, ctx, fs),
+          runOpenSearchSemanticSearch(commandArgs, ctx, fs, semanticSearcher),
         ),
       );
     }

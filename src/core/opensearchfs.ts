@@ -13,7 +13,6 @@ import {
   getOpenSearchFsIndexNames,
   type OpenSearchFsIndexNames,
 } from '../opensearchfs-constants.js';
-import { createEmbeddingProvider, type EmbeddingProvider } from './embedding.js';
 import type {
   DirentEntry,
   ReadFileOptions,
@@ -58,13 +57,6 @@ interface FileHitSource {
   slug?: string;
 }
 
-export interface RankedFileHit {
-  slug: string;
-  score: number;
-  content: string;
-  chunkId?: number;
-}
-
 /**
  * Coarse grep filter used by {@link OpenSearchFs.findMatchingFiles}.
  */
@@ -88,31 +80,7 @@ function escapeRegexpLiteral(value: string): string {
 }
 
 type SearchHit = {
-  _score?: number;
   _source?: FileHitSource;
-  inner_hits?: {
-    chunks?: {
-      hits?: {
-        hits?: NestedChunkHit[];
-      };
-    };
-  };
-};
-
-type NestedChunkHit = {
-  _score?: number;
-  _source?:
-    | {
-        chunk_id?: number;
-        text?: string;
-      }
-    | {
-        chunks?: {
-          chunk_id?: number;
-          text?: string;
-        };
-      };
-  fields?: Record<string, unknown[]>;
 };
 
 type SearchBody = {
@@ -121,60 +89,10 @@ type SearchBody = {
   };
 };
 
-type SemanticVectorLayout = 'nested_chunks' | 'legacy_embedding';
-
 function unwrapSearchBody(res: unknown): SearchBody {
   return (
     (res as { body?: SearchBody }).body ??
     (res as SearchBody)
-  );
-}
-
-function extractNestedChunkHit(
-  hit: SearchHit,
-): { chunkId?: number; text: string } | undefined {
-  const nestedHit = hit.inner_hits?.chunks?.hits?.hits?.[0];
-  if (!nestedHit) return undefined;
-  const source = nestedHit._source;
-  if (source && 'text' in source && typeof source.text === 'string') {
-    return {
-      chunkId: typeof source.chunk_id === 'number' ? source.chunk_id : undefined,
-      text: source.text,
-    };
-  }
-  if (
-    source &&
-    'chunks' in source &&
-    source.chunks &&
-    typeof source.chunks.text === 'string'
-  ) {
-    return {
-      chunkId:
-        typeof source.chunks.chunk_id === 'number'
-          ? source.chunks.chunk_id
-          : undefined,
-      text: source.chunks.text,
-    };
-  }
-  const fieldText = nestedHit.fields?.['chunks.text']?.[0];
-  if (typeof fieldText === 'string') {
-    const fieldChunkId = nestedHit.fields?.['chunks.chunk_id']?.[0];
-    return {
-      chunkId: typeof fieldChunkId === 'number' ? fieldChunkId : undefined,
-      text: fieldText,
-    };
-  }
-  return undefined;
-}
-
-function isMissingNestedChunksError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  if (message.includes('failed to find nested object under path [chunks]')) {
-    return true;
-  }
-  const body = (error as { meta?: { body?: unknown } } | undefined)?.meta?.body;
-  return JSON.stringify(body ?? {}).includes(
-    'failed to find nested object under path [chunks]',
   );
 }
 
@@ -185,21 +103,17 @@ export class OpenSearchFs implements IFileSystem {
   private files = new Set<string>();
   private dirs = new Map<string, string[]>();
   private readonly client: Client;
-  private readonly embeddings: EmbeddingProvider;
   private readonly indexNames: OpenSearchFsIndexNames;
-  private semanticVectorLayout: SemanticVectorLayout | undefined;
 
   constructor(options: {
     client: Client;
     files: ReadonlySet<string>;
     dirs: ReadonlyMap<string, string[]>;
-    embeddings?: EmbeddingProvider;
     indexNames?: OpenSearchFsIndexNames;
   }) {
     this.client = options.client;
     this.files = new Set(options.files);
     this.dirs = new Map(options.dirs);
-    this.embeddings = options.embeddings ?? createEmbeddingProvider();
     this.indexNames = options.indexNames ?? getOpenSearchFsIndexNames();
   }
 
@@ -361,120 +275,6 @@ export class OpenSearchFs implements IFileSystem {
     return [...slugs];
   }
 
-  async findSemanticMatchingFiles(
-    pattern: string,
-    slugsUnderDirs: string[],
-    limit: number,
-  ): Promise<RankedFileHit[]> {
-    if (slugsUnderDirs.length === 0) return [];
-    const k = Math.max(1, Math.min(limit, slugsUnderDirs.length));
-    return this.findSemanticMatchingFilesWithScope(
-      pattern,
-      { terms: { slug: slugsUnderDirs } },
-      k,
-    );
-  }
-
-  async findSemanticMatchingFilesWithScope(
-    pattern: string,
-    scopeFilter: SearchScopeFilter,
-    limit: number,
-  ): Promise<RankedFileHit[]> {
-    const k = Math.max(1, limit);
-    const vector = await this.embeddings.embed(pattern, 'query');
-    const embeddingQuery: Record<string, unknown> = {
-      vector,
-      k: Math.max(k, Math.min(k * 10, 1000)),
-    };
-
-    if (this.semanticVectorLayout === 'legacy_embedding') {
-      const legacyRes = await this.searchLegacySemanticFiles(
-        embeddingQuery,
-        scopeFilter,
-        k,
-      );
-      return this.parseRankedHits(legacyRes);
-    }
-
-    let res: unknown;
-    try {
-      res = await this.searchNestedSemanticFiles(embeddingQuery, scopeFilter, k);
-      this.semanticVectorLayout = 'nested_chunks';
-    } catch (error) {
-      if (!isMissingNestedChunksError(error)) {
-        throw error;
-      }
-      this.semanticVectorLayout = 'legacy_embedding';
-      res = await this.searchLegacySemanticFiles(embeddingQuery, scopeFilter, k);
-    }
-    return this.parseRankedHits(res);
-  }
-
-  private async searchNestedSemanticFiles(
-    embeddingQuery: Record<string, unknown>,
-    scopeFilter: SearchScopeFilter,
-    size: number,
-  ): Promise<unknown> {
-    const nestedChunkQuery = {
-      nested: {
-        path: 'chunks',
-        score_mode: 'max',
-        query: {
-          knn: {
-            'chunks.embedding': embeddingQuery,
-          },
-        },
-        inner_hits: {
-          size: 1,
-          _source: ['chunks.chunk_id', 'chunks.text'],
-        },
-      },
-    };
-    return this.client.search({
-      index: this.indexNames.files,
-      body: {
-        size,
-        _source: ['slug'],
-        query: scopeFilter
-          ? {
-              bool: {
-                filter: [scopeFilter],
-                must: [nestedChunkQuery],
-              },
-            }
-          : nestedChunkQuery,
-      },
-    } as never);
-  }
-
-  private async searchLegacySemanticFiles(
-    embeddingQuery: Record<string, unknown>,
-    scopeFilter: SearchScopeFilter,
-    size: number,
-  ): Promise<unknown> {
-    const legacyEmbeddingQuery = {
-      knn: {
-        embedding: embeddingQuery,
-      },
-    };
-    const res = await this.client.search({
-      index: this.indexNames.files,
-      body: {
-        size,
-        _source: ['slug', 'content'],
-        query: scopeFilter
-          ? {
-              bool: {
-                filter: [scopeFilter],
-                must: [legacyEmbeddingQuery],
-              },
-            }
-          : legacyEmbeddingQuery,
-      },
-    } as never);
-    return res;
-  }
-
   /**
    * Read the contents of a file as a string (default: utf8)
    * @throws Error if file doesn't exist or is a directory
@@ -502,22 +302,6 @@ export class OpenSearchFs implements IFileSystem {
 
     return content;
   }
-
-  private parseRankedHits(res: unknown): RankedFileHit[] {
-    const hits = unwrapSearchBody(res).hits?.hits ?? [];
-    return hits
-      .map((hit) => {
-        const chunk = extractNestedChunkHit(hit);
-        return {
-          slug: hit._source?.slug ?? '',
-          score: hit._score ?? 0,
-          content: chunk?.text ?? hit._source?.content ?? '',
-          chunkId: chunk?.chunkId,
-        };
-      })
-      .filter((hit) => hit.slug.length > 0 && hit.content.length > 0);
-  }
-
   /**
    * Read the contents of a file as a Uint8Array (binary)
    * Same logical file as {@link readFile}, as UTF-8 bytes (corpus is text in ES).

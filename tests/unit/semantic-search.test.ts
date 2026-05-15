@@ -1,8 +1,45 @@
-import { describe, expect, it } from 'vitest';
+import type { Client } from '@opensearch-project/opensearch';
+import { describe, expect, it, vi } from 'vitest';
+import type { EmbeddingProvider } from '../../src/core/embedding.js';
 import {
+  OpenSearchSemanticSearcher,
   parseSemanticSearchArgv,
   parseSemanticSearchLimit,
 } from '../../src/core/semantic-search.js';
+
+type SearchResponse = {
+  body: {
+    hits: {
+      hits: Array<{
+        _score?: number;
+        _source?: {
+          slug?: string;
+        };
+        inner_hits?: {
+          chunks?: {
+            hits?: {
+              hits?: Array<{
+                _source?: {
+                  chunk_id?: number;
+                  text?: string;
+                };
+              }>;
+            };
+          };
+        };
+      }>;
+    };
+  };
+};
+
+const testEmbeddings: EmbeddingProvider = {
+  async embed() {
+    return new Array(768).fill(0);
+  },
+  async embedMany(texts) {
+    return texts.map(() => new Array(768).fill(0));
+  },
+};
 
 describe('semantic_search helpers', () => {
   it('parses query with the default path', () => {
@@ -35,5 +72,83 @@ describe('semantic_search helpers', () => {
     expect(() => parseSemanticSearchArgv(['a', '/x', '/y'])).toThrow(
       /too many arguments/u,
     );
+  });
+
+  it('queries nested chunk vectors and returns the matched chunk text', async () => {
+    const searchMock = vi
+      .fn<(request: object) => Promise<SearchResponse>>()
+      .mockResolvedValueOnce({
+        body: {
+          hits: {
+            hits: [
+              {
+                _score: 12,
+                _source: { slug: 'docs/runbook' },
+                inner_hits: {
+                  chunks: {
+                    hits: {
+                      hits: [
+                        {
+                          _source: {
+                            chunk_id: 2,
+                            text: 'Restart the streaming worker after quota errors.',
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      });
+
+    const client = { search: searchMock } as object as Client;
+    const searcher = new OpenSearchSemanticSearcher({
+      client,
+      embeddings: testEmbeddings,
+    });
+
+    const hits = await searcher.findMatchingFilesWithScope(
+      'streaming quota',
+      { prefix: { slug: 'docs/' } },
+      5,
+    );
+
+    expect(searchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          query: {
+            bool: {
+              filter: [{ prefix: { slug: 'docs/' } }],
+              must: [
+                {
+                  nested: expect.objectContaining({
+                    path: 'chunks',
+                    query: {
+                      knn: {
+                        'chunks.embedding': expect.objectContaining({
+                          k: 50,
+                        }),
+                      },
+                    },
+                    inner_hits: expect.objectContaining({ size: 1 }),
+                  }),
+                },
+              ],
+            },
+          },
+        }),
+      }),
+    );
+    expect(hits).toEqual([
+      {
+        slug: 'docs/runbook',
+        score: 12,
+        content: 'Restart the streaming worker after quota errors.',
+        chunkId: 2,
+      },
+    ]);
   });
 });

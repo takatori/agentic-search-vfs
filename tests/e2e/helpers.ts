@@ -4,7 +4,10 @@ import { Bash, defineCommand } from 'just-bash';
 import { afterAll, beforeAll, describe, expect } from 'vitest';
 import { OpenSearchFs } from '../../src/core/opensearchfs.js';
 import { runOpenSearchGrep } from '../../src/core/grep.js';
-import { runOpenSearchSemanticSearch } from '../../src/core/semantic-search.js';
+import {
+  OpenSearchSemanticSearcher,
+  runOpenSearchSemanticSearch,
+} from '../../src/core/semantic-search.js';
 import { createOpenSearchClient } from '../../src/opensearch-adapter/client.js';
 import { initSessionTree } from '../../src/session.js';
 
@@ -66,11 +69,12 @@ export async function createBashSession(
   profile: Profile,
 ): Promise<OpenSearchSession & { bash: Bash }> {
   const { client, fs } = await createOpenSearchSession(profile);
+  const semanticSearcher = new OpenSearchSemanticSearcher({ client });
   const grep = defineCommand('grep', async (args, ctx) =>
     runOpenSearchGrep(args, ctx, fs),
   );
   const semanticSearch = defineCommand('semantic_search', async (args, ctx) =>
-    runOpenSearchSemanticSearch(args, ctx, fs),
+    runOpenSearchSemanticSearch(args, ctx, fs, semanticSearcher),
   );
   const bash = new Bash({
     fs,

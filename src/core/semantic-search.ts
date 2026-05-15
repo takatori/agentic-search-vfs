@@ -1,8 +1,13 @@
 import type { CommandContext, ExecResult } from 'just-bash';
+import type { Client } from '@opensearch-project/opensearch';
 import yargsParser from 'yargs-parser';
+import {
+  getOpenSearchFsIndexNames,
+  type OpenSearchFsIndexNames,
+} from '../opensearchfs-constants.js';
+import { createEmbeddingProvider, type EmbeddingProvider } from './embedding.js';
 import type {
   OpenSearchFs,
-  RankedFileHit,
   SearchScopeFilter,
 } from './opensearchfs.js';
 import { normalizePath, pathToSlug, slugToPath } from './path-tree.js';
@@ -13,6 +18,181 @@ export interface ParsedSemanticSearchArgv {
   query: string;
   pathArg: string;
   limit: number;
+}
+
+export interface RankedFileHit {
+  slug: string;
+  score: number;
+  content: string;
+  chunkId?: number;
+}
+
+type SearchHit = {
+  _score?: number;
+  _source?: {
+    slug?: string;
+  };
+  inner_hits?: {
+    chunks?: {
+      hits?: {
+        hits?: NestedChunkHit[];
+      };
+    };
+  };
+};
+
+type NestedChunkHit = {
+  _source?:
+    | {
+        chunk_id?: number;
+        text?: string;
+      }
+    | {
+        chunks?: {
+          chunk_id?: number;
+          text?: string;
+        };
+      };
+  fields?: Record<string, unknown[]>;
+};
+
+type SearchBody = {
+  hits?: {
+    hits?: SearchHit[];
+  };
+};
+
+function unwrapSearchBody(res: unknown): SearchBody {
+  return (res as { body?: SearchBody }).body ?? (res as SearchBody);
+}
+
+function extractNestedChunkHit(
+  hit: SearchHit,
+): { chunkId?: number; text: string } | undefined {
+  const nestedHit = hit.inner_hits?.chunks?.hits?.hits?.[0];
+  if (!nestedHit) return undefined;
+  const source = nestedHit._source;
+  if (source && 'text' in source && typeof source.text === 'string') {
+    return {
+      chunkId: typeof source.chunk_id === 'number' ? source.chunk_id : undefined,
+      text: source.text,
+    };
+  }
+  if (
+    source &&
+    'chunks' in source &&
+    source.chunks &&
+    typeof source.chunks.text === 'string'
+  ) {
+    return {
+      chunkId:
+        typeof source.chunks.chunk_id === 'number'
+          ? source.chunks.chunk_id
+          : undefined,
+      text: source.chunks.text,
+    };
+  }
+  const fieldText = nestedHit.fields?.['chunks.text']?.[0];
+  if (typeof fieldText === 'string') {
+    const fieldChunkId = nestedHit.fields?.['chunks.chunk_id']?.[0];
+    return {
+      chunkId: typeof fieldChunkId === 'number' ? fieldChunkId : undefined,
+      text: fieldText,
+    };
+  }
+  return undefined;
+}
+
+export class OpenSearchSemanticSearcher {
+  private readonly client: Client;
+  private readonly indexNames: OpenSearchFsIndexNames;
+  private embeddings: EmbeddingProvider | undefined;
+
+  constructor(options: {
+    client: Client;
+    embeddings?: EmbeddingProvider;
+    indexNames?: OpenSearchFsIndexNames;
+  }) {
+    this.client = options.client;
+    this.embeddings = options.embeddings;
+    this.indexNames = options.indexNames ?? getOpenSearchFsIndexNames();
+  }
+
+  async findMatchingFilesWithScope(
+    pattern: string,
+    scopeFilter: SearchScopeFilter,
+    limit: number,
+  ): Promise<RankedFileHit[]> {
+    const k = Math.max(1, limit);
+    const vector = await this.getEmbeddings().embed(pattern, 'query');
+    const embeddingQuery: Record<string, unknown> = {
+      vector,
+      k: Math.max(k, Math.min(k * 10, 1000)),
+    };
+    const res = await this.searchNestedSemanticFiles(
+      embeddingQuery,
+      scopeFilter,
+      k,
+    );
+    return this.parseRankedHits(res);
+  }
+
+  private getEmbeddings(): EmbeddingProvider {
+    this.embeddings ??= createEmbeddingProvider();
+    return this.embeddings;
+  }
+
+  private async searchNestedSemanticFiles(
+    embeddingQuery: Record<string, unknown>,
+    scopeFilter: SearchScopeFilter,
+    size: number,
+  ): Promise<unknown> {
+    const nestedChunkQuery = {
+      nested: {
+        path: 'chunks',
+        score_mode: 'max',
+        query: {
+          knn: {
+            'chunks.embedding': embeddingQuery,
+          },
+        },
+        inner_hits: {
+          size: 1,
+          _source: ['chunks.chunk_id', 'chunks.text'],
+        },
+      },
+    };
+    return this.client.search({
+      index: this.indexNames.files,
+      body: {
+        size,
+        _source: ['slug'],
+        query: scopeFilter
+          ? {
+              bool: {
+                filter: [scopeFilter],
+                must: [nestedChunkQuery],
+              },
+            }
+          : nestedChunkQuery,
+      },
+    } as never);
+  }
+
+  private parseRankedHits(res: unknown): RankedFileHit[] {
+    const hits = unwrapSearchBody(res).hits?.hits ?? [];
+    return hits
+      .map((hit) => {
+        const chunk = extractNestedChunkHit(hit);
+        return {
+          slug: hit._source?.slug ?? '',
+          score: hit._score ?? 0,
+          content: chunk?.text ?? '',
+          chunkId: chunk?.chunkId,
+        };
+      })
+      .filter((hit) => hit.slug.length > 0 && hit.content.length > 0);
+  }
 }
 
 export function parseSemanticSearchLimit(
@@ -66,6 +246,7 @@ export async function runOpenSearchSemanticSearch(
   args: string[],
   ctx: CommandContext,
   opensearchFs: OpenSearchFs,
+  searcher: OpenSearchSemanticSearcher,
 ): Promise<ExecResult> {
   let parsed: ParsedSemanticSearchArgv;
   try {
@@ -85,7 +266,7 @@ export async function runOpenSearchSemanticSearch(
   }
 
   try {
-    const hits = await opensearchFs.findSemanticMatchingFilesWithScope(
+    const hits = await searcher.findMatchingFilesWithScope(
       parsed.query,
       scope.scopeFilter,
       parsed.limit,
