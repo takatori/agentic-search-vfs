@@ -20,10 +20,7 @@ import {
 import { Bash, defineCommand } from 'just-bash';
 import { runOpenSearchGrep } from '../src/core/grep.js';
 import { OpenSearchFs } from '../src/core/opensearchfs.js';
-import {
-  OpenSearchSemanticSearcher,
-  runOpenSearchSemanticSearch,
-} from '../src/core/semantic-search.js';
+import { runOpenSearchSemanticSearch } from '../src/core/semantic-search.js';
 import { createOpenSearchClient } from '../src/opensearch-adapter/client.js';
 import { initSessionTree } from '../src/session.js';
 
@@ -45,12 +42,11 @@ const fs = new OpenSearchFs({
   files: session.files,
   dirs: session.dirs,
 });
-const semanticSearcher = new OpenSearchSemanticSearcher({ client });
 const grep = defineCommand('grep', (args, ctx) =>
-  runOpenSearchGrep(args, ctx, fs),
+  runOpenSearchGrep(args, ctx, fs, client),
 );
 const semanticSearch = defineCommand('semantic_search', (args, ctx) =>
-  runOpenSearchSemanticSearch(args, ctx, fs, semanticSearcher),
+  runOpenSearchSemanticSearch(args, ctx, fs, client),
 );
 const bash = new Bash({ fs, cwd: '/', customCommands: [grep, semanticSearch] });
 

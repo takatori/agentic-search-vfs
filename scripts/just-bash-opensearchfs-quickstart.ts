@@ -2,10 +2,7 @@ import 'dotenv/config';
 import { Bash, defineCommand } from 'just-bash';
 import { OpenSearchFs } from '../src/core/opensearchfs.js';
 import { runOpenSearchGrep } from '../src/core/grep.js';
-import {
-  OpenSearchSemanticSearcher,
-  runOpenSearchSemanticSearch,
-} from '../src/core/semantic-search.js';
+import { runOpenSearchSemanticSearch } from '../src/core/semantic-search.js';
 import { createOpenSearchClient } from '../src/opensearch-adapter/client.js';
 import { initSessionTree } from '../src/session.js';
 
@@ -36,14 +33,13 @@ const opensearchFs = new OpenSearchFs({
   files: session.files,
   dirs: session.dirs,
 });
-const semanticSearcher = new OpenSearchSemanticSearcher({ client });
 
 // Define custom grep command
 const grep = defineCommand('grep', async (args, ctx) =>
-  runOpenSearchGrep(args, ctx, opensearchFs),
+  runOpenSearchGrep(args, ctx, opensearchFs, client),
 );
 const semanticSearch = defineCommand('semantic_search', async (args, ctx) =>
-  runOpenSearchSemanticSearch(args, ctx, opensearchFs, semanticSearcher),
+  runOpenSearchSemanticSearch(args, ctx, opensearchFs, client),
 );
 
 // Set up virtual bash environment

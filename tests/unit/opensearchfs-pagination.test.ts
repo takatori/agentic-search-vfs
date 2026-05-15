@@ -1,6 +1,6 @@
 import type { Client } from '@opensearch-project/opensearch';
 import { describe, expect, it, vi } from 'vitest';
-import { OpenSearchFs } from '../../src/core/opensearchfs.js';
+import { findGrepMatchingFiles } from '../../src/core/grep.js';
 
 type SearchResponse = {
   body: {
@@ -19,7 +19,7 @@ function makeFileHit(slug: string): SearchResponse['body']['hits']['hits'][numbe
   return { _source: { slug } };
 }
 
-describe('OpenSearchFs pagination', () => {
+describe('grep coarse search pagination', () => {
   it('paginates coarse grep search and deduplicates slugs', async () => {
     const firstPage = [
       ...Array.from({ length: 999 }, (_, i) => makeFileHit(`alpha-${i}`)),
@@ -33,18 +33,14 @@ describe('OpenSearchFs pagination', () => {
       .mockResolvedValueOnce({ body: { hits: { hits: secondPage } } });
 
     const client = { search: searchMock } as object as Client;
-    const fs = new OpenSearchFs({
-      client,
-      files: new Set(),
-      dirs: new Map(),
-    });
 
     const scopeSlugs = [
       ...Array.from({ length: 999 }, (_, i) => `alpha-${i}`),
       'beta',
       'gamma',
     ];
-    const out = await fs.findMatchingFiles(
+    const out = await findGrepMatchingFiles(
+      client,
       { pattern: 'access_token', ignoreCase: true, fixedStrings: false },
       scopeSlugs,
     );

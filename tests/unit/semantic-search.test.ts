@@ -2,7 +2,7 @@ import type { Client } from '@opensearch-project/opensearch';
 import { describe, expect, it, vi } from 'vitest';
 import type { EmbeddingProvider } from '../../src/core/embedding.js';
 import {
-  OpenSearchSemanticSearcher,
+  findSemanticMatchingFilesWithScope,
   parseSemanticSearchArgv,
   parseSemanticSearchLimit,
 } from '../../src/core/semantic-search.js';
@@ -105,15 +105,12 @@ describe('semantic_search helpers', () => {
       });
 
     const client = { search: searchMock } as object as Client;
-    const searcher = new OpenSearchSemanticSearcher({
+    const hits = await findSemanticMatchingFilesWithScope(
       client,
-      embeddings: testEmbeddings,
-    });
-
-    const hits = await searcher.findMatchingFilesWithScope(
       'streaming quota',
       { prefix: { slug: 'docs/' } },
       5,
+      { embeddings: testEmbeddings },
     );
 
     expect(searchMock).toHaveBeenCalledWith(

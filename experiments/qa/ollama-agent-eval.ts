@@ -107,7 +107,7 @@ try {
     dirs: session.dirs,
   });
   const grep = defineCommand('grep', (commandArgs, ctx) =>
-    runOpenSearchGrep(commandArgs, ctx, fs),
+    runOpenSearchGrep(commandArgs, ctx, fs, client),
   );
   const bash = new Bash({ fs, cwd: '/', customCommands: [grep] });
 

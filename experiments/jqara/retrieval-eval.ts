@@ -2,10 +2,13 @@ import 'dotenv/config';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import yargsParser from 'yargs-parser';
-import type { GrepCoarseFilter } from '../../src/core/opensearchfs.js';
+import {
+  findGrepMatchingFilesWithScope,
+  type GrepCoarseFilter,
+} from '../../src/core/grep.js';
 import { OpenSearchFs, type SearchScopeFilter } from '../../src/core/opensearchfs.js';
 import { normalizePath, pathToSlug, slugToPath } from '../../src/core/path-tree.js';
-import { OpenSearchSemanticSearcher } from '../../src/core/semantic-search.js';
+import { findSemanticMatchingFilesWithScope } from '../../src/core/semantic-search.js';
 import { createOpenSearchClient } from '../../src/opensearch-adapter/client.js';
 import { initSessionTree } from '../../src/session.js';
 
@@ -68,15 +71,12 @@ try {
     files: session.files,
     dirs: session.dirs,
   });
-  const semanticSearcher = new OpenSearchSemanticSearcher({ client });
   const scopeFilter = await resolveScopeFilter(fs, searchPath);
 
   for (const arm of arms) {
     for (const testCase of cases) {
       const startedAt = Date.now();
       const retrievedPaths = await runRetrievalArm(
-        fs,
-        semanticSearcher,
         arm,
         testCase.question,
         scopeFilter,
@@ -101,15 +101,14 @@ try {
 await writeReports(outputPath, rows);
 
 async function runRetrievalArm(
-  fs: OpenSearchFs,
-  semanticSearcher: OpenSearchSemanticSearcher,
   arm: Arm,
   question: string,
   scopeFilter: SearchScopeFilter,
   limit: number,
 ): Promise<string[]> {
   if (arm === 'semantic_search') {
-    const hits = await semanticSearcher.findMatchingFilesWithScope(
+    const hits = await findSemanticMatchingFilesWithScope(
+      client,
       question,
       scopeFilter,
       limit,
@@ -122,7 +121,11 @@ async function runRetrievalArm(
     ignoreCase: true,
     fixedStrings: true,
   };
-  const slugs = await fs.findMatchingFilesWithScope(coarseFilter, scopeFilter);
+  const slugs = await findGrepMatchingFilesWithScope(
+    client,
+    coarseFilter,
+    scopeFilter,
+  );
   return slugs.slice(0, limit).map((slug) => slugToPath(slug));
 }
 

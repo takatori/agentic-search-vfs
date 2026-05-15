@@ -5,10 +5,7 @@ import { Bash, defineCommand } from 'just-bash';
 import yargsParser from 'yargs-parser';
 import { runOpenSearchGrep } from '../../src/core/grep.js';
 import { OpenSearchFs } from '../../src/core/opensearchfs.js';
-import {
-  OpenSearchSemanticSearcher,
-  runOpenSearchSemanticSearch,
-} from '../../src/core/semantic-search.js';
+import { runOpenSearchSemanticSearch } from '../../src/core/semantic-search.js';
 import { createOpenSearchClient } from '../../src/opensearch-adapter/client.js';
 import { initSessionTree } from '../../src/session.js';
 
@@ -116,15 +113,14 @@ for (const arm of arms) {
       files: session.files,
       dirs: session.dirs,
     });
-    const semanticSearcher = new OpenSearchSemanticSearcher({ client });
     const grep = defineCommand('grep', (commandArgs, ctx) =>
-      runOpenSearchGrep(commandArgs, ctx, fs),
+      runOpenSearchGrep(commandArgs, ctx, fs, client),
     );
     const customCommands = [grep];
     if (arm === 'grep+semantic_search') {
       customCommands.push(
         defineCommand('semantic_search', (commandArgs, ctx) =>
-          runOpenSearchSemanticSearch(commandArgs, ctx, fs, semanticSearcher),
+          runOpenSearchSemanticSearch(commandArgs, ctx, fs, client),
         ),
       );
     }

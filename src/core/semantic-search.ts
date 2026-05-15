@@ -103,7 +103,12 @@ function extractNestedChunkHit(
   return undefined;
 }
 
-export class OpenSearchSemanticSearcher {
+type OpenSearchSemanticSearchOptions = {
+  embeddings?: EmbeddingProvider;
+  indexNames?: OpenSearchFsIndexNames;
+};
+
+class OpenSearchSemanticSearcher {
   private readonly client: Client;
   private readonly indexNames: OpenSearchFsIndexNames;
   private embeddings: EmbeddingProvider | undefined;
@@ -195,6 +200,34 @@ export class OpenSearchSemanticSearcher {
   }
 }
 
+const semanticSearchers = new WeakMap<Client, OpenSearchSemanticSearcher>();
+
+function getSemanticSearcher(client: Client): OpenSearchSemanticSearcher {
+  let searcher = semanticSearchers.get(client);
+  if (!searcher) {
+    searcher = new OpenSearchSemanticSearcher({ client });
+    semanticSearchers.set(client, searcher);
+  }
+  return searcher;
+}
+
+export async function findSemanticMatchingFilesWithScope(
+  client: Client,
+  pattern: string,
+  scopeFilter: SearchScopeFilter,
+  limit: number,
+  options?: OpenSearchSemanticSearchOptions,
+): Promise<RankedFileHit[]> {
+  const searcher = options
+    ? new OpenSearchSemanticSearcher({
+        client,
+        embeddings: options.embeddings,
+        indexNames: options.indexNames,
+      })
+    : getSemanticSearcher(client);
+  return searcher.findMatchingFilesWithScope(pattern, scopeFilter, limit);
+}
+
 export function parseSemanticSearchLimit(
   raw = process.env.SEMANTIC_SEARCH_RESULT_LIMIT,
 ): number {
@@ -246,7 +279,7 @@ export async function runOpenSearchSemanticSearch(
   args: string[],
   ctx: CommandContext,
   opensearchFs: OpenSearchFs,
-  searcher: OpenSearchSemanticSearcher,
+  client: Client,
 ): Promise<ExecResult> {
   let parsed: ParsedSemanticSearchArgv;
   try {
@@ -266,7 +299,8 @@ export async function runOpenSearchSemanticSearch(
   }
 
   try {
-    const hits = await searcher.findMatchingFilesWithScope(
+    const hits = await findSemanticMatchingFilesWithScope(
+      client,
       parsed.query,
       scope.scopeFilter,
       parsed.limit,

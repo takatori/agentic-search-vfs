@@ -54,30 +54,10 @@ function einval(message: string): Error {
 
 interface FileHitSource {
   content?: string;
-  slug?: string;
-}
-
-/**
- * Coarse grep filter used by {@link OpenSearchFs.findMatchingFiles}.
- */
-export interface GrepCoarseFilter {
-  pattern: string;
-  ignoreCase: boolean;
-  fixedStrings: boolean;
 }
 
 export type OpenSearchQuery = Record<string, unknown>;
 export type SearchScopeFilter = OpenSearchQuery | undefined;
-
-const SEARCH_PAGE_SIZE = 1000;
-
-function hasRegexMeta(pattern: string): boolean {
-  return /[\\^$.*+?()[\]{}|]/u.test(pattern);
-}
-
-function escapeRegexpLiteral(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-}
 
 type SearchHit = {
   _source?: FileHitSource;
@@ -154,125 +134,6 @@ export class OpenSearchFs implements IFileSystem {
    */
   getVisibleFilePaths(): string[] {
     return [...this.files].sort();
-  }
-
-  /**
-   * Paginate over the files index with `search_after`, processing each page via callbacks.
-   * Stops when a page is empty, shorter than `SEARCH_PAGE_SIZE`, or the cursor extractor returns `undefined`.
-   */
-  private async searchAllPages(
-    params: Record<string, unknown>,
-    extractCursor: (
-      hits: { _source?: FileHitSource }[],
-    ) => unknown[] | undefined,
-    onPage: (hits: { _source?: FileHitSource }[]) => void,
-  ): Promise<void> {
-    let searchAfter: unknown[] | undefined;
-    while (true) {
-      const body = {
-        ...((params.body as Record<string, unknown> | undefined) ?? {}),
-        size: SEARCH_PAGE_SIZE,
-        ...(searchAfter !== undefined ? { search_after: searchAfter } : {}),
-      };
-      const res = await this.client.search({
-        ...params,
-        body,
-      } as never);
-      const hits = unwrapSearchBody(res).hits?.hits ?? [];
-      if (hits.length === 0) break;
-      onPage(hits);
-      if (hits.length < SEARCH_PAGE_SIZE) break;
-      const cursor = extractCursor(hits);
-      if (cursor === undefined) break;
-      searchAfter = cursor;
-    }
-  }
-
-  /**
-   * Coarse stage for `grep`: distinct file `slug` values that may match.
-   *
-   * @param slugsUnderDirs In-scope ingest slugs (e.g. `auth/oauth`).
-   * @returns Slugs that passed the coarse query and optional match_phrase/regexp filter.
-   */
-  async findMatchingFiles(
-    coarseFilter: GrepCoarseFilter,
-    slugsUnderDirs: string[],
-  ): Promise<string[]> {
-    if (slugsUnderDirs.length === 0) return [];
-    return this.findMatchingFilesWithScope(coarseFilter, {
-      terms: { slug: slugsUnderDirs },
-    });
-  }
-
-  async findMatchingFilesWithScope(
-    coarseFilter: GrepCoarseFilter,
-    scopeFilter?: SearchScopeFilter,
-  ): Promise<string[]> {
-    const isLiteralPattern =
-      coarseFilter.fixedStrings || !hasRegexMeta(coarseFilter.pattern);
-
-    const query = {
-      bool: {
-        ...(scopeFilter ? { filter: [scopeFilter] } : {}),
-        must: isLiteralPattern
-          ? coarseFilter.ignoreCase
-            ? [
-                {
-                  match_phrase: {
-                    content: coarseFilter.pattern,
-                  },
-                },
-              ]
-            : [
-                {
-                  regexp: {
-                    'content.pattern': {
-                      value: `.*(${escapeRegexpLiteral(coarseFilter.pattern)}).*`,
-                      case_insensitive: false,
-                    },
-                  },
-                },
-              ]
-          : [
-              {
-                regexp: {
-                  'content.pattern': {
-                    value: `.*(${coarseFilter.pattern}).*`,
-                    case_insensitive: coarseFilter.ignoreCase,
-                  },
-                },
-              },
-            ],
-      },
-    };
-
-    const slugs = new Set<string>();
-    await this.searchAllPages(
-      {
-        index: this.indexNames.files,
-        body: {
-          track_total_hits: false,
-          _source: ['slug'],
-          sort: [{ slug: { order: 'asc' } }],
-          query,
-        },
-      },
-      (hits) => {
-        const last = hits[hits.length - 1];
-        const lastSlug = last?._source?.slug;
-        if (typeof lastSlug !== 'string' || lastSlug.length === 0) {
-          return undefined;
-        }
-        return [lastSlug];
-      },
-      (hits) => {
-        for (const hit of hits) {
-          const s = hit._source?.slug;
-          if (typeof s === 'string' && s.length > 0) slugs.add(s);
-        }
-      },
-    );
-    return [...slugs];
   }
 
   /**

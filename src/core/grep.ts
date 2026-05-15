@@ -3,9 +3,16 @@
  */
 
 import type { CommandContext, ExecResult } from 'just-bash';
+import type { Client } from '@opensearch-project/opensearch';
 import yargsParser from 'yargs-parser';
+import {
+  getOpenSearchFsIndexNames,
+  type OpenSearchFsIndexNames,
+} from '../opensearchfs-constants.js';
 import type { OpenSearchFs, SearchScopeFilter } from './opensearchfs.js';
 import { normalizePath, pathToSlug, slugToPath } from './path-tree.js';
+
+const SEARCH_PAGE_SIZE = 1000;
 
 /** Returns true if the string contains any regex metacharacters (used to decide whether to treat a pattern as literal or regex). */
 export function hasRegexMeta(pattern: string): boolean {
@@ -15,6 +22,188 @@ export function hasRegexMeta(pattern: string): boolean {
 /** Escapes all regex metacharacters in `value` so it can be embedded safely in a `RegExp` as a literal string. */
 export function escapeRegexpLiteral(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export interface GrepCoarseFilter {
+  pattern: string;
+  ignoreCase: boolean;
+  fixedStrings: boolean;
+}
+
+type FileHitSource = {
+  slug?: string;
+};
+
+type SearchHit = {
+  _source?: FileHitSource;
+};
+
+type SearchBody = {
+  hits?: {
+    hits?: SearchHit[];
+  };
+};
+
+function unwrapSearchBody(res: unknown): SearchBody {
+  return (res as { body?: SearchBody }).body ?? (res as SearchBody);
+}
+
+type OpenSearchGrepSearchOptions = {
+  indexNames?: OpenSearchFsIndexNames;
+};
+
+class OpenSearchGrepSearcher {
+  private readonly client: Client;
+  private readonly indexNames: OpenSearchFsIndexNames;
+
+  constructor(options: {
+    client: Client;
+    indexNames?: OpenSearchFsIndexNames;
+  }) {
+    this.client = options.client;
+    this.indexNames = options.indexNames ?? getOpenSearchFsIndexNames();
+  }
+
+  /**
+   * Coarse stage for `grep`: distinct file `slug` values that may match.
+   *
+   * @param slugsUnderDirs In-scope ingest slugs (e.g. `auth/oauth`).
+   * @returns Slugs that passed the coarse query and optional match_phrase/regexp filter.
+   */
+  async findMatchingFiles(
+    coarseFilter: GrepCoarseFilter,
+    slugsUnderDirs: string[],
+  ): Promise<string[]> {
+    if (slugsUnderDirs.length === 0) return [];
+    return this.findMatchingFilesWithScope(coarseFilter, {
+      terms: { slug: slugsUnderDirs },
+    });
+  }
+
+  async findMatchingFilesWithScope(
+    coarseFilter: GrepCoarseFilter,
+    scopeFilter?: SearchScopeFilter,
+  ): Promise<string[]> {
+    const isLiteralPattern =
+      coarseFilter.fixedStrings || !hasRegexMeta(coarseFilter.pattern);
+
+    const query = {
+      bool: {
+        ...(scopeFilter ? { filter: [scopeFilter] } : {}),
+        must: isLiteralPattern
+          ? coarseFilter.ignoreCase
+            ? [
+                {
+                  match_phrase: {
+                    content: coarseFilter.pattern,
+                  },
+                },
+              ]
+            : [
+                {
+                  regexp: {
+                    'content.pattern': {
+                      value: `.*(${escapeRegexpLiteral(coarseFilter.pattern)}).*`,
+                      case_insensitive: false,
+                    },
+                  },
+                },
+              ]
+          : [
+              {
+                regexp: {
+                  'content.pattern': {
+                    value: `.*(${coarseFilter.pattern}).*`,
+                    case_insensitive: coarseFilter.ignoreCase,
+                  },
+                },
+              },
+            ],
+      },
+    };
+
+    const slugs = new Set<string>();
+    await this.searchAllPages(
+      {
+        index: this.indexNames.files,
+        body: {
+          track_total_hits: false,
+          _source: ['slug'],
+          sort: [{ slug: { order: 'asc' } }],
+          query,
+        },
+      },
+      (hits) => {
+        const last = hits[hits.length - 1];
+        const lastSlug = last?._source?.slug;
+        if (typeof lastSlug !== 'string' || lastSlug.length === 0) {
+          return undefined;
+        }
+        return [lastSlug];
+      },
+      (hits) => {
+        for (const hit of hits) {
+          const s = hit._source?.slug;
+          if (typeof s === 'string' && s.length > 0) slugs.add(s);
+        }
+      },
+    );
+    return [...slugs];
+  }
+
+  /**
+   * Paginate over the files index with `search_after`, processing each page via callbacks.
+   * Stops when a page is empty, shorter than `SEARCH_PAGE_SIZE`, or the cursor extractor returns `undefined`.
+   */
+  private async searchAllPages(
+    params: Record<string, unknown>,
+    extractCursor: (hits: SearchHit[]) => unknown[] | undefined,
+    onPage: (hits: SearchHit[]) => void,
+  ): Promise<void> {
+    let searchAfter: unknown[] | undefined;
+    while (true) {
+      const body = {
+        ...((params.body as Record<string, unknown> | undefined) ?? {}),
+        size: SEARCH_PAGE_SIZE,
+        ...(searchAfter !== undefined ? { search_after: searchAfter } : {}),
+      };
+      const res = await this.client.search({
+        ...params,
+        body,
+      } as never);
+      const hits = unwrapSearchBody(res).hits?.hits ?? [];
+      if (hits.length === 0) break;
+      onPage(hits);
+      if (hits.length < SEARCH_PAGE_SIZE) break;
+      const cursor = extractCursor(hits);
+      if (cursor === undefined) break;
+      searchAfter = cursor;
+    }
+  }
+}
+
+export async function findGrepMatchingFiles(
+  client: Client,
+  coarseFilter: GrepCoarseFilter,
+  slugsUnderDirs: string[],
+  options?: OpenSearchGrepSearchOptions,
+): Promise<string[]> {
+  return new OpenSearchGrepSearcher({
+    client,
+    indexNames: options?.indexNames,
+  }).findMatchingFiles(coarseFilter, slugsUnderDirs);
+}
+
+export async function findGrepMatchingFilesWithScope(
+  client: Client,
+  coarseFilter: GrepCoarseFilter,
+  scopeFilter?: SearchScopeFilter,
+  options?: OpenSearchGrepSearchOptions,
+): Promise<string[]> {
+  return new OpenSearchGrepSearcher({
+    client,
+    indexNames: options?.indexNames,
+  }).findMatchingFilesWithScope(coarseFilter, scopeFilter);
 }
 
 // --- argv (yargs-parser) ---
@@ -329,6 +518,7 @@ export async function runOpenSearchGrep(
   args: string[],
   ctx: CommandContext,
   opensearchFs: OpenSearchFs,
+  client: Client,
 ): Promise<ExecResult> {
   // Parse arguments
   let scannedArgs: ParsedGrepArgv;
@@ -371,7 +561,8 @@ export async function runOpenSearchGrep(
   // Coarse Filter: Ask backing store for slugs matching the string/regex
   let matchedSlugs: string[];
   try {
-    matchedSlugs = await opensearchFs.findMatchingFilesWithScope(
+    matchedSlugs = await findGrepMatchingFilesWithScope(
+      client,
       coarseFilter,
       scope.scopeFilter,
     );
